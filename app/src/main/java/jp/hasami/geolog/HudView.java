@@ -61,6 +61,12 @@ public class HudView extends View {
   private ZoomMap zoom;
   private final RectF zoomBtn = new RectF();
   private boolean zoomBtnDown;
+  // LOCAL のときだけ、指でなぞって地図を動かす。panE・panN は今いる所からまん中までのずれ（メートル、東・北が正）
+  private final RectF zoomArea = new RectF();
+  private final RectF centerBtn = new RectF();
+  private boolean centerBtnDown, panTracking, panning;
+  private float downX, downY, lastX, lastY;
+  private double panE, panN;
   // 縦横の切り替え（右上のボタン。重力センサーでは変えない）
   private final RectF rotBtn = new RectF();
   // 住所の札の右上：今の名前 ↔ 古い名前（OLD：市町村は 1970 年、町字は 2000 年。時期が混ざるので「1970」とは書かない）
@@ -117,11 +123,19 @@ public class HudView extends View {
       zoomBtnDown = zoomBtn.contains(x, y);
       rotBtnDown = rotBtn.contains(x, y);
       eraBtnDown = eraBtn.contains(x, y);
+      centerBtnDown = isPanned() && centerBtn.contains(x, y);
+      boolean onButton = zoomBtnDown || rotBtnDown || eraBtnDown || centerBtnDown;
+      panTracking = !onButton && zoomMode == ZoomMap.LOCAL && zoomArea.contains(x, y);
+      panning = false;
+      downX = lastX = x;
+      downY = lastY = y;
     }
-    if (!zoomBtnDown && !rotBtnDown && !eraBtnDown) return super.onTouchEvent(e);
+    if (panTracking && handlePan(e, x, y, act)) return true;
+    if (!zoomBtnDown && !rotBtnDown && !eraBtnDown && !centerBtnDown) return super.onTouchEvent(e);
     if (act == MotionEvent.ACTION_UP) {
       if (zoomBtnDown && zoomBtn.contains(x, y)) {
         zoomMode = (zoomMode + 1) % 3;
+        panE = panN = 0;   // ZOOM を変えたら今いる所をまん中に戻す
         prefs.edit().putInt("zoom", zoomMode).apply();
       }
       if (rotBtnDown && rotBtn.contains(x, y) && onRotate != null) onRotate.run();
@@ -129,13 +143,50 @@ public class HudView extends View {
         era1970 = !era1970;
         prefs.edit().putBoolean("era1970", era1970).apply();
       }
-      zoomBtnDown = rotBtnDown = eraBtnDown = false;
+      if (centerBtnDown && centerBtn.contains(x, y)) panE = panN = 0;
+      zoomBtnDown = rotBtnDown = eraBtnDown = centerBtnDown = false;
     } else if (act == MotionEvent.ACTION_CANCEL) {
-      zoomBtnDown = rotBtnDown = eraBtnDown = false;
+      zoomBtnDown = rotBtnDown = eraBtnDown = centerBtnDown = false;
     }
     invalidate();
     return true;
   }
+
+  /**
+   * LOCAL の地図をなぞって動かす。指が少し動いたら（8dp）動かし始め、それまでは普通の押す・長押しとして扱う。
+   * 動かし始めたら、押す・長押しの判定は取り消す。true を返したら、この指の動きはここで使い切った
+   */
+  private boolean handlePan(MotionEvent e, float x, float y, int act) {
+    float slop = 8 * getResources().getDisplayMetrics().density;
+    if (act == MotionEvent.ACTION_MOVE) {
+      if (!panning && Math.hypot(x - downX, y - downY) > slop) {
+        panning = true;
+        MotionEvent cancel = MotionEvent.obtain(e);
+        cancel.setAction(MotionEvent.ACTION_CANCEL);
+        super.onTouchEvent(cancel);   // 長押し（設定を開く）や押す（画面を点けたまま）を取り消す
+        cancel.recycle();
+      }
+      if (panning && zoom != null) {
+        // 指が右へ動いたら地図も右へ＝まん中は西へ
+        panE -= (x - lastX) * zoom.mpp;
+        panN += (y - lastY) * zoom.mpp;
+        lastX = x;
+        lastY = y;
+        invalidate();
+        return true;
+      }
+      return false;
+    }
+    if (act == MotionEvent.ACTION_UP || act == MotionEvent.ACTION_CANCEL) {
+      boolean was = panning;
+      panTracking = panning = false;
+      return was;
+    }
+    return false;
+  }
+
+  /** 地図を動かして、まん中が今いる所からずれているか（LOCAL のときだけ） */
+  private boolean isPanned() { return zoomMode == ZoomMap.LOCAL && (panE != 0 || panN != 0); }
 
   @Override
   protected void onSizeChanged(int w, int h, int ow, int oh) {
@@ -184,10 +235,14 @@ public class HudView extends View {
     boolean zoomed = zoomMode != ZoomMap.JAPAN && State.fix && State.rgeo != null;
     if (zoomed) {
       // 拡大した地図は、置き場所いっぱいに描く（住所の札とボタンもその枠に合わせる）
+      zoomArea.set(mapL, mapT, mapL + aw, mapT + ah);
       drawZoom(c, mapL, mapT, aw, ah, s, nowMs);
       drawPlace(c, mapL, mapT, scale, s, nowMs);
       drawZoomButton(c, mapL, mapT, aw, ah, s);
+      drawCenterButton(c, mapL, mapT, aw, ah, s);
     } else {
+      zoomArea.setEmpty();
+      centerBtn.setEmpty();
       pMap.setAlpha(State.fix ? 230 : 140);
       c.drawBitmap(map, null, new RectF(mx, my, mx + mw, my + mh), pMap);
       if (State.fix) drawPin(c, mx, my, scale, s, nowMs);
@@ -415,10 +470,19 @@ public class HudView extends View {
     if (zoom == null) zoom = new ZoomMap(State.rgeo, State.oldNames, State.oldTowns);
     float charW = (zoomMode == ZoomMap.PREF ? 24 : 22) * s;
     Bounds.Lines bl = State.bounds == null ? null : era1970 ? State.bounds.old1970 : State.bounds.now;
-    zoom.update(zoomMode, State.lat, State.lon, mw, mh, charW, charW * 1.35f, bl, era1970);
+    // まん中：今いる所から、指で動かした分（LOCAL だけ）ずらす
+    double cLat = State.lat, cLon = State.lon;
+    if (zoomMode == ZoomMap.LOCAL) {
+      cLat += panN / 110574.0;
+      cLon += panE / (111320.0 * Math.cos(Math.toRadians(State.lat)));
+    }
+    zoom.update(zoomMode, cLat, cLon, mw, mh, charW, charW * 1.35f, bl, era1970);
+    // 計算し直すのは 8 ドット以上ずれたときだけなので、その間の小さなずれは描く位置を動かして埋める（なぞるときに滑らかに）
+    float[] rc = zoom.toScreen(cLat, cLon);
+    float ox = zoom.cx - rc[0], oy = zoom.cy - rc[1];
     c.save();
     c.clipRect(mx, my, mx + mw, my + mh);
-    c.translate(mx, my);
+    c.translate(mx + ox, my + oy);
     // 枠と方眼
     pLine.setColor(GREEN_DARK);
     pLine.setStrokeWidth(1 * s);
@@ -462,6 +526,23 @@ public class HudView extends View {
     pLine.setColor(GREEN_DARK);
     pLine.setStrokeWidth(2 * s);
     c.drawRect(mx, my, mx + mw, my + mh, pLine);
+  }
+
+  /** 左下の [CENTER]：LOCAL で地図を動かしたときだけ出す。押すと今いる所をまん中に戻す */
+  private void drawCenterButton(Canvas c, float mx, float my, float mw, float mh, float s) {
+    if (!isPanned()) {
+      centerBtn.setEmpty();
+      return;
+    }
+    float bw = 200 * s, bh = 58 * s, pad = 8 * s;
+    centerBtn.set(mx + pad, my + mh - bh - pad, mx + pad + bw, my + mh - pad);
+    pText.setStyle(Paint.Style.FILL);
+    pText.setColor(centerBtnDown ? Color.argb(200, 0, 120, 30) : Color.argb(190, 0, 0, 0));
+    c.drawRect(centerBtn, pText);
+    pLine.setColor(AMBER);
+    pLine.setStrokeWidth(2.5f * s);
+    c.drawRect(centerBtn, pLine);
+    glow(c, "[CENTER]", centerBtn.left + 16 * s, centerBtn.bottom - 18 * s, 30 * s, mono, AMBER, 8 * s);
   }
 
   /** 右下の拡大ボタン */
