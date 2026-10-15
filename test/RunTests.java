@@ -94,7 +94,7 @@ public class RunTests {
     String[] t2 = ot.at(g.nearest(35.951149, 140.049357).index);
     check(t2 != null && t2[1].equals("大字谷井田"), "谷井田 → 2000 年は大字谷井田 " + (t2 == null ? null : t2[1]));
     t2 = ot.at(g.nearest(35.681236, 139.767125).index);
-    check(t2 != null && t2[1].equals("丸の内１丁目"), "東京駅 → 2000 年は丸の内１丁目 " + (t2 == null ? null : t2[1]));
+    check(t2 != null && t2[1].equals("丸の内一丁目"), "東京駅 → 2000 年は丸の内一丁目（丁目の数字は漢数字にそろえる） " + (t2 == null ? null : t2[1]));
     java.lang.reflect.Constructor<?> ctor = zc.getDeclaredConstructor(RGeo.class, jp.hasami.geolog.OldNames.class, jp.hasami.geolog.OldNames.class);
     ctor.setAccessible(true);
     Object z = ctor.newInstance(g, on, ot);
