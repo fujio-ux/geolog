@@ -1,0 +1,2 @@
+// GeoLog：Rakuten Hand 5G（P780）用の、GPS の時刻・町字・時速・標高の表示と行動記録。外部のライブラリは使わない
+plugins { id "com.android.application" version "9.4.1" apply false }

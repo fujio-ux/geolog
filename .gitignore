@@ -1,0 +1,7 @@
+build/
+.gradle/
+local.properties
+*.apk
+.DS_Store
+# 自分のサーバー・端末の運用メモ（公開しない）
+*.local.md
