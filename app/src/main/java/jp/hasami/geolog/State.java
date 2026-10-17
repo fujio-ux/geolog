@@ -28,6 +28,8 @@ final class State {
   static volatile long obdAt;               // 最後に回転数が読めた時刻（3 秒以上前なら N/A にする）
   static volatile String obdRaw = "";       // 最後の 010C の返事（空白などを除いたもの。画面の確認用の行に出す）
   static volatile int obdOk, obdNg;         // 回転数が読めた／読めなかった回数
+  static volatile float obdHz;              // 1 秒あたりに回転数が取れた回数（直近 2 秒）
+  static volatile String obdForm = "";      // 使っている問い合わせの形（010C0D1・010C1 など）
 
   // 記録と送信
   static int pending;              // まだ送っていない点の数

@@ -46,6 +46,25 @@ public final class Elm327 {
     return d == null ? Integer.MIN_VALUE : d[0] - 40;
   }
 
+  /**
+   * 回転数と車速をまとめて聞いた返事（「010C0D」→「41 0C 1A F8 0D 3C」。CAN では 1 つの返事に続けて入る）。
+   * {回転数, 車速} を返す。読めなければ null（このアダプター・車がまとめ聞きに対応していない）
+   */
+  public static double[] rpmSpeed(String resp) {
+    String s = clean(resp);
+    int i = s.indexOf("410C");
+    if (i < 0 || s.length() < i + 12) return null;
+    String rest = s.substring(i + 8);
+    if (!rest.startsWith("0D")) return null;
+    try {
+      int a = Integer.parseInt(s.substring(i + 4, i + 6), 16), b = Integer.parseInt(s.substring(i + 6, i + 8), 16);
+      int k = Integer.parseInt(rest.substring(2, 4), 16);
+      return new double[] {(a * 256 + b) / 4.0, k};
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
+
   /** ATRV の電圧（例「12.6V」）。読めなければ NaN */
   public static double volt(String resp) {
     if (resp == null) return Double.NaN;

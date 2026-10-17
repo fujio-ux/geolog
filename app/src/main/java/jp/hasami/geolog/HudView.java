@@ -78,6 +78,7 @@ public class HudView extends View {
   private boolean tachoBtnDown;
   boolean tacho;
   private float shownRpm;   // 針の位置（目標へ少しずつ近づけて、なめらかに動かす）
+  private long lastTachoMs;
   private boolean rotBtnDown;
   Runnable onRotate;
   int rot;   // 今の向き（0：360 度、1：90 度、2：180 度、3：270 度）
@@ -276,7 +277,9 @@ public class HudView extends View {
     // 走査線
     for (int sy = 0; sy < h; sy += Math.max(3, (int) (4 * s))) c.drawLine(0, sy, w, sy, pScan);
 
-    postInvalidateDelayed(50);   // 毎秒 20 回描き直す（画面が見えている間だけ）
+    // 描き直し：タコメーターでつながっているときは画面の更新に合わせて（毎秒 60 回）、ほかは毎秒 20 回（画面が見えている間だけ）
+    if (tacho && State.obdLinked) postInvalidateOnAnimation();
+    else postInvalidateDelayed(50);
   }
 
   /** 時刻と日付。戻り値は書き終えた所の y */
@@ -375,7 +378,11 @@ public class HudView extends View {
   private void drawTacho(Canvas c, float l, float t, float w, float h, float s, long nowMs) {
     // 3 秒以内に回転数が読めていれば、その値を出す（短く途切れても直前の値のまま）。3 秒以上途切れたら針も数字も N/A
     boolean linked = State.obdAt > 0 && System.currentTimeMillis() - State.obdAt < 3000;
-    if (linked) shownRpm += ((float) State.obdRpm - shownRpm) * 0.35f;
+    if (linked) {
+      float dtS = Math.min(0.1f, (nowMs - lastTachoMs) / 1000f);
+      shownRpm += ((float) State.obdRpm - shownRpm) * Math.min(1f, dtS * 30f);   // 約 33ms で差の 63% を詰める（鋭く、でもカクつかない）
+    }
+    lastTachoMs = nowMs;
     float cx = l + w / 2, cy = t + h / 2 + 10 * s, R = Math.min(w, h) / 2 - 16 * s;
     RectF oval = new RectF(cx - R, cy - R, cx + R, cy + R);
     pLine.setStrokeCap(Paint.Cap.BUTT);
@@ -383,7 +390,8 @@ public class HudView extends View {
     // 状態（左上）と確認用の行（読めた／読めなかった回数、最後の 010C の返事）
     label(c, "// OBD LINK " + (linked ? "LOCKED" : State.obdStatus) + (State.obdName.isEmpty() ? "" : "  " + State.obdName), l + 24 * s, t + 30 * s, s);
     String raw = State.obdRaw.length() > 18 ? State.obdRaw.substring(0, 18) : State.obdRaw;
-    glow(c, "OK " + State.obdOk + " NG " + State.obdNg + "  " + raw, l + 24 * s, t + 58 * s, 20 * s, mono, linked ? GREEN_DIM : AMBER, 0);
+    glow(c, String.format(Locale.ROOT, "%.1fHz %s OK %d NG %d %s", State.obdHz, State.obdForm, State.obdOk, State.obdNg, raw),
+        l + 24 * s, t + 58 * s, 20 * s, mono, linked ? GREEN_DIM : AMBER, 0);
 
     // 外の輪（シフトの合図：赤く点滅）
     boolean shift = linked && shownRpm >= TACHO_SHIFT && (nowMs / 120) % 2 == 0;

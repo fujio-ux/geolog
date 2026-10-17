@@ -45,6 +45,11 @@ public class RunTests {
     check(jp.hasami.geolog.Elm327.coolant("?\r>") == Integer.MIN_VALUE, "水温 読めない");
     check(jp.hasami.geolog.Elm327.volt("12.6V\r>") == 12.6 && jp.hasami.geolog.Elm327.volt("ATRV\r14.2V") == 14.2, "電圧");
     check(Double.isNaN(jp.hasami.geolog.Elm327.volt("?")), "電圧 読めない");
+    double[] rs = jp.hasami.geolog.Elm327.rpmSpeed("41 0C 1A F8 0D 3C\r>");
+    check(rs != null && rs[0] == 1726.0 && rs[1] == 60, "まとめ聞き 回転数＋車速");
+    check(jp.hasami.geolog.Elm327.rpmSpeed("410C1AF8") == null, "まとめ聞きに対応していない返事（回転数だけ）");
+    check(jp.hasami.geolog.Elm327.rpmSpeed("NO DATA") == null, "まとめ聞き NO DATA");
+    check(jp.hasami.geolog.Elm327.rpm("41 0C 1A F8 0D 3C") == 1726.0, "まとめ聞きの返事から回転数だけでも読める");
     check(jp.hasami.geolog.Elm327.noCar("UNABLE TO CONNECT\r>") && jp.hasami.geolog.Elm327.noCar("NO DATA") && !jp.hasami.geolog.Elm327.noCar("41 0C 1A F8"), "車とつながっていない返事");
   }
 
