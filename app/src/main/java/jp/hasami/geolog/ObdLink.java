@@ -103,28 +103,34 @@ final class ObdLink {
     State.obdStatus = "SEARCHING";
     String r = send(in, out, "0100", 10000);   // 最初の問い合わせで通信方式を探す（数秒かかる）
     if (Elm327.noCar(r)) State.obdStatus = "NO ENGINE";
+    Log.i(TAG, "0100 の返事：" + Elm327.clean(r));
+    State.obdOk = State.obdNg = 0;
     for (int i = 0; running; i++) {
-      r = send(in, out, "010C", 1500);
+      r = send(in, out, "010C", 2500);
+      State.obdRaw = Elm327.clean(r);
       double rpm = Elm327.rpm(r);
+      if (i < 30 || i % 100 == 0) Log.i(TAG, "010C の返事 #" + i + "：" + State.obdRaw + " → " + rpm);
       if (rpm >= 0) {
         State.obdRpm = rpm;
         State.obdAt = System.currentTimeMillis();
         State.obdLinked = true;
         State.obdStatus = "LINKED";
-      } else if (Elm327.noCar(r)) {
-        State.obdRpm = 0;
-        State.obdLinked = false;
-        State.obdStatus = "NO ENGINE";
-        nap(1000);
+        State.obdOk++;
+      } else {
+        State.obdNg++;
+        if (Elm327.noCar(r)) {
+          State.obdStatus = "NO ENGINE";
+          nap(1000);
+        }
       }
       if (i % 3 == 0) {
-        int k = Elm327.speed(send(in, out, "010D", 1500));
+        int k = Elm327.speed(send(in, out, "010D", 2500));
         if (k >= 0) State.obdKmh = k;
       }
       if (i % 30 == 0) {
-        int c = Elm327.coolant(send(in, out, "0105", 1500));
+        int c = Elm327.coolant(send(in, out, "0105", 2500));
         if (c != Integer.MIN_VALUE) State.obdCoolant = c;
-        double v = Elm327.volt(send(in, out, "ATRV", 1500));
+        double v = Elm327.volt(send(in, out, "ATRV", 2500));
         if (!Double.isNaN(v)) State.obdVolt = v;
       }
     }
@@ -137,14 +143,23 @@ final class ObdLink {
     out.flush();
     StringBuilder sb = new StringBuilder();
     long end = System.currentTimeMillis() + timeoutMs;
+    boolean prompt = false;
     while (System.currentTimeMillis() < end) {
       if (in.available() > 0) {
         int c = in.read();
         if (c < 0) throw new IOException("切れた");
-        if (c == '>') break;
+        if (c == '>') { prompt = true; break; }
         sb.append((char) c);
       } else {
         nap(5);
+      }
+    }
+    if (!prompt) {   // 時間切れ：遅れて来る残りを 0.5 秒待って捨てる（次の命令の返事とずれないように）
+      Log.w(TAG, cmd + "：時間切れ（" + Elm327.clean(sb.toString()) + "）");
+      long drainEnd = System.currentTimeMillis() + 500;
+      while (System.currentTimeMillis() < drainEnd) {
+        while (in.available() > 0) if (in.read() == '>') drainEnd = 0;
+        nap(10);
       }
     }
     return sb.toString();

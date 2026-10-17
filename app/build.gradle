@@ -6,8 +6,8 @@ android {
     applicationId "jp.hasami.geolog"
     minSdk 30          // Rakuten Hand 5G は Android 11
     targetSdk 36
-    versionCode 17
-    versionName "0.11.0"
+    versionCode 18
+    versionName "0.11.1"
   }
   compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
   // 町字のデータ（rgeo_all.bin）は圧縮せずに入れて、そのままメモリに割り当てて読む

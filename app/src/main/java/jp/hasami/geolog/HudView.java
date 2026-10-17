@@ -369,35 +369,24 @@ public class HudView extends View {
   // ---- タコメーター（スズキ ハスラー MR31S、R06A 660cc に合わせた目盛り。値は実車で直す） ----
   static final int TACHO_MAX = 8000, TACHO_RED = 6500, TACHO_SHIFT = 6000;
 
-  /** デモの回転数：アイドル → 1 速でふかす → 変速 → 2 速 → 3 速 → 戻る（16 秒でくり返し） */
-  private static float demoRpm(long t) {
-    float x = (t % 16000) / 1000f;
-    if (x < 2) return 800 + 30 * (float) Math.sin(x * 20);
-    if (x < 4.5f) return 800 + (x - 2) / 2.5f * 6000;
-    if (x < 5) return 6800 - (x - 4.5f) * 2 * 2800;
-    if (x < 8) return 4000 + (x - 5) / 3 * 2800;
-    if (x < 8.5f) return 6800 - (x - 8) * 2 * 2300;
-    if (x < 12) return 4500 + (x - 8.5f) / 3.5f * 1500;
-    return 6000 - (x - 12) / 4 * 5200;
-  }
-
   /** 角度（Android の描き方：3 時が 0 度、時計回り）。0 回転が左下 135 度、最大が右下 45 度（270 度ぶん） */
   private static float tachoAngle(float rpm) { return 135 + 270 * Math.max(0, Math.min(rpm, TACHO_MAX)) / TACHO_MAX; }
 
   private void drawTacho(Canvas c, float l, float t, float w, float h, float s, long nowMs) {
-    boolean linked = State.obdLinked && System.currentTimeMillis() - State.obdAt < 3000;
-    float target = linked ? (float) State.obdRpm : demoRpm(nowMs);
-    shownRpm += (target - shownRpm) * 0.35f;
+    // 3 秒以内に回転数が読めていれば、その値を出す（短く途切れても直前の値のまま）。3 秒以上途切れたら針も数字も N/A
+    boolean linked = State.obdAt > 0 && System.currentTimeMillis() - State.obdAt < 3000;
+    if (linked) shownRpm += ((float) State.obdRpm - shownRpm) * 0.35f;
     float cx = l + w / 2, cy = t + h / 2 + 10 * s, R = Math.min(w, h) / 2 - 16 * s;
     RectF oval = new RectF(cx - R, cy - R, cx + R, cy + R);
     pLine.setStrokeCap(Paint.Cap.BUTT);
 
-    // 状態（左上）
-    label(c, "// OBD LINK " + (linked ? "LOCKED" : State.obdStatus), l + 24 * s, t + 30 * s, s);
-    if (!linked) glow(c, State.obdName.isEmpty() ? "DEMO MODE" : "DEMO  " + State.obdName, l + 24 * s, t + 60 * s, 24 * s, mono, AMBER, 0);
+    // 状態（左上）と確認用の行（読めた／読めなかった回数、最後の 010C の返事）
+    label(c, "// OBD LINK " + (linked ? "LOCKED" : State.obdStatus) + (State.obdName.isEmpty() ? "" : "  " + State.obdName), l + 24 * s, t + 30 * s, s);
+    String raw = State.obdRaw.length() > 18 ? State.obdRaw.substring(0, 18) : State.obdRaw;
+    glow(c, "OK " + State.obdOk + " NG " + State.obdNg + "  " + raw, l + 24 * s, t + 58 * s, 20 * s, mono, linked ? GREEN_DIM : AMBER, 0);
 
     // 外の輪（シフトの合図：赤く点滅）
-    boolean shift = shownRpm >= TACHO_SHIFT && (nowMs / 120) % 2 == 0;
+    boolean shift = linked && shownRpm >= TACHO_SHIFT && (nowMs / 120) % 2 == 0;
     pLine.setColor(shift ? RED : GREEN_DARK);
     pLine.setStrokeWidth((shift ? 6 : 2) * s);
     c.drawArc(oval, 135, 270, false, pLine);
@@ -407,10 +396,12 @@ public class HudView extends View {
     pLine.setStrokeWidth(10 * s);
     pLine.setColor(Color.argb(70, 0, 255, 65));
     c.drawArc(in, 135, 270, false, pLine);
-    pLine.setColor(shownRpm >= TACHO_RED ? RED : GREEN);
-    pLine.setShadowLayer(14 * s, 0, 0, shownRpm >= TACHO_RED ? RED : GREEN);
-    c.drawArc(in, 135, tachoAngle(shownRpm) - 135, false, pLine);
-    pLine.clearShadowLayer();
+    if (linked) {
+      pLine.setColor(shownRpm >= TACHO_RED ? RED : GREEN);
+      pLine.setShadowLayer(14 * s, 0, 0, shownRpm >= TACHO_RED ? RED : GREEN);
+      c.drawArc(in, 135, tachoAngle(shownRpm) - 135, false, pLine);
+      pLine.clearShadowLayer();
+    }
     // レッドゾーン
     RectF red = new RectF(oval);
     red.inset(30 * s, 30 * s);
@@ -434,35 +425,37 @@ public class HudView extends View {
         glow(c, n, cx + (float) Math.cos(a) * rt - tw / 2, cy + (float) Math.sin(a) * rt + 14 * s, 40 * s, mono, r >= TACHO_RED ? RED : WHITE, 6 * s);
       }
     }
-    // 針
-    double a = Math.toRadians(tachoAngle(shownRpm));
-    float tip = R - 30 * s, tail = 26 * s;
-    pLine.setStrokeCap(Paint.Cap.ROUND);
-    pLine.setColor(AMBER);
-    pLine.setStrokeWidth(7 * s);
-    pLine.setShadowLayer(12 * s, 0, 0, AMBER);
-    c.drawLine(cx - (float) Math.cos(a) * tail, cy - (float) Math.sin(a) * tail, cx + (float) Math.cos(a) * tip, cy + (float) Math.sin(a) * tip, pLine);
-    pLine.clearShadowLayer();
-    pLine.setStrokeCap(Paint.Cap.BUTT);
+    // 針（データが途切れて N/A のときは出さない）
+    if (linked) {
+      double a = Math.toRadians(tachoAngle(shownRpm));
+      float tip = R - 30 * s, tail = 26 * s;
+      pLine.setStrokeCap(Paint.Cap.ROUND);
+      pLine.setColor(AMBER);
+      pLine.setStrokeWidth(7 * s);
+      pLine.setShadowLayer(12 * s, 0, 0, AMBER);
+      c.drawLine(cx - (float) Math.cos(a) * tail, cy - (float) Math.sin(a) * tail, cx + (float) Math.cos(a) * tip, cy + (float) Math.sin(a) * tip, pLine);
+      pLine.clearShadowLayer();
+      pLine.setStrokeCap(Paint.Cap.BUTT);
+    }
     pText.setStyle(Paint.Style.FILL);
     pText.setColor(Color.rgb(40, 40, 40));
     c.drawCircle(cx, cy, 20 * s, pText);
     pText.setColor(AMBER);
     c.drawCircle(cx, cy, 10 * s, pText);
     // 回転数の数字（針の下）と単位
-    String rv = String.valueOf(Math.round(shownRpm / 10) * 10);
+    String rv = linked ? String.valueOf(Math.round(shownRpm / 10) * 10) : "N/A";
     float size = 86 * s, rw = measureFixed(rv, size);
-    bodoniFixed(c, rv, cx - rw / 2, cy + R * 0.48f, size, shownRpm >= TACHO_RED ? RED : WHITE, 14 * s, 600);
+    bodoniFixed(c, rv, cx - rw / 2, cy + R * 0.48f, size, !linked ? GREEN_DIM : shownRpm >= TACHO_RED ? RED : WHITE, 14 * s, 600);
     String unit = "x1000 r/min";
     pText.setTypeface(mono);
     pText.setTextSize(24 * s);
     glow(c, unit, cx - pText.measureText(unit) / 2, cy + R * 0.48f + 34 * s, 24 * s, mono, GREEN_DIM, 0);
     // 今いる所（メーターの下の開いた所、単位と車速の行の間）。OLD 表示なら古い名前
     drawTachoPlace(c, cx, cy + R * 0.48f + 34 * s, t + h - 12 * s - 34 * s, Math.min(w, 2 * R) - 40 * s, s);
-    // 下：車速・水温・電圧（OBD から。デモでは --）
-    String sp = linked && State.obdKmh >= 0 ? State.obdKmh + " km/h" : "--- km/h";
-    String wt = linked && State.obdCoolant != Integer.MIN_VALUE ? "WATER " + State.obdCoolant + "C" : "WATER --";
-    String vt = linked && !Double.isNaN(State.obdVolt) ? String.format(Locale.ROOT, "BATT %.1fV", State.obdVolt) : "BATT --";
+    // 下：車速・水温・電圧（OBD から。途切れて 3 秒たったら N/A）
+    String sp = linked && State.obdKmh >= 0 ? State.obdKmh + " km/h" : "N/A km/h";
+    String wt = linked && State.obdCoolant != Integer.MIN_VALUE ? "WATER " + State.obdCoolant + "C" : "WATER N/A";
+    String vt = linked && !Double.isNaN(State.obdVolt) ? String.format(Locale.ROOT, "BATT %.1fV", State.obdVolt) : "BATT N/A";
     String line = sp + "   " + wt + "   " + vt;
     pText.setTextSize(28 * s);
     glow(c, line, cx - pText.measureText(line) / 2, t + h - 12 * s, 28 * s, mono, CYAN, 0);

@@ -25,7 +25,9 @@ final class State {
   static volatile String obdStatus = "OFF", obdName = "";
   static volatile double obdRpm, obdVolt = Double.NaN;
   static volatile int obdKmh = -1, obdCoolant = Integer.MIN_VALUE;
-  static volatile long obdAt;
+  static volatile long obdAt;               // 最後に回転数が読めた時刻（3 秒以上前なら N/A にする）
+  static volatile String obdRaw = "";       // 最後の 010C の返事（空白などを除いたもの。画面の確認用の行に出す）
+  static volatile int obdOk, obdNg;         // 回転数が読めた／読めなかった回数
 
   // 記録と送信
   static int pending;              // まだ送っていない点の数
