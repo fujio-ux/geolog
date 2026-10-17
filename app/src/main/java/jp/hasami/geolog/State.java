@@ -20,6 +20,13 @@ final class State {
   static Bounds bounds;            // 拡大地図の境界線（bounds.bin。今と 1970 年）
   static RGeo.Place demoPlace;     // 表示の確認用（adb で am start に --es demo_city/demo_town を付けたときだけ）
 
+  // OBD2（ELM327、ObdLink）
+  static volatile boolean obdLinked;
+  static volatile String obdStatus = "OFF", obdName = "";
+  static volatile double obdRpm, obdVolt = Double.NaN;
+  static volatile int obdKmh = -1, obdCoolant = Integer.MIN_VALUE;
+  static volatile long obdAt;
+
   // 記録と送信
   static int pending;              // まだ送っていない点の数
   static long lastUploadAt;        // 最後に送れた時刻（端末の時計）

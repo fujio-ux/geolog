@@ -25,11 +25,27 @@ public class RunTests {
 
   public static void main(String[] args) throws Exception {
     testNmea();
+    testElm();
     testTrack();
     testRGeo(args.length > 0 ? args[0] : "app/src/main/assets/rgeo_all.bin",
              System.getProperty("user.home") + "/Documents/reverse-geocoding/data/towns.csv");
     System.out.println(failed == 0 ? "OK（" + passed + " 件）" : "失敗 " + failed + " 件／成功 " + passed + " 件");
     System.exit(failed == 0 ? 0 : 1);
+  }
+
+  static void testElm() {
+    // 実際の ELM327 の返事の形（こだま・空白・改行・プロンプトが混ざる）
+    check(jp.hasami.geolog.Elm327.rpm("010C\r41 0C 1A F8 \r\r>") == 1726.0, "回転数 1A F8 → 1726");
+    check(jp.hasami.geolog.Elm327.rpm("410C0000") == 0.0, "回転数 0");
+    check(jp.hasami.geolog.Elm327.rpm("SEARCHING...\r41 0C 0B B8\r>") == 750.0, "SEARCHING の後でも読める（0BB8 → 750）");
+    check(jp.hasami.geolog.Elm327.rpm("NO DATA\r>") == -1, "NO DATA は読めない");
+    check(jp.hasami.geolog.Elm327.rpm("41 0C 1A") == -1, "途中で切れた返事は読めない");
+    check(jp.hasami.geolog.Elm327.speed("41 0D 3C\r>") == 60, "車速 3C → 60");
+    check(jp.hasami.geolog.Elm327.coolant("41 05 7B\r>") == 83, "水温 7B → 83℃");
+    check(jp.hasami.geolog.Elm327.coolant("?\r>") == Integer.MIN_VALUE, "水温 読めない");
+    check(jp.hasami.geolog.Elm327.volt("12.6V\r>") == 12.6 && jp.hasami.geolog.Elm327.volt("ATRV\r14.2V") == 14.2, "電圧");
+    check(Double.isNaN(jp.hasami.geolog.Elm327.volt("?")), "電圧 読めない");
+    check(jp.hasami.geolog.Elm327.noCar("UNABLE TO CONNECT\r>") && jp.hasami.geolog.Elm327.noCar("NO DATA") && !jp.hasami.geolog.Elm327.noCar("41 0C 1A F8"), "車とつながっていない返事");
   }
 
   static void testNmea() {

@@ -73,6 +73,11 @@ public class HudView extends View {
   private final RectF eraBtn = new RectF();
   private boolean eraBtnDown;
   boolean era1970;
+  // タコメーター（右上の [TACHO]／[MAP] で地図と切り替え。ELM327 とつながっていなければデモの動き）
+  private final RectF tachoBtn = new RectF();
+  private boolean tachoBtnDown;
+  boolean tacho;
+  private float shownRpm;   // 針の位置（目標へ少しずつ近づけて、なめらかに動かす）
   private boolean rotBtnDown;
   Runnable onRotate;
   int rot;   // 今の向き（0：360 度、1：90 度、2：180 度、3：270 度）
@@ -95,6 +100,8 @@ public class HudView extends View {
     prefs = ctx.getSharedPreferences("hud", Context.MODE_PRIVATE);
     zoomMode = prefs.getInt("zoom", ZoomMap.JAPAN);
     era1970 = prefs.getBoolean("era1970", false);
+    tacho = prefs.getBoolean("tacho", false);
+    if (tacho) ObdLink.get().start();
   }
 
   /**
@@ -122,16 +129,17 @@ public class HudView extends View {
     if (act == MotionEvent.ACTION_DOWN) {
       zoomBtnDown = zoomBtn.contains(x, y);
       rotBtnDown = rotBtn.contains(x, y);
+      tachoBtnDown = tachoBtn.contains(x, y);
       eraBtnDown = eraBtn.contains(x, y);
       centerBtnDown = isPanned() && centerBtn.contains(x, y);
-      boolean onButton = zoomBtnDown || rotBtnDown || eraBtnDown || centerBtnDown;
+      boolean onButton = zoomBtnDown || rotBtnDown || eraBtnDown || centerBtnDown || tachoBtnDown;
       panTracking = !onButton && zoomMode == ZoomMap.LOCAL && zoomArea.contains(x, y);
       panning = false;
       downX = lastX = x;
       downY = lastY = y;
     }
     if (panTracking && handlePan(e, x, y, act)) return true;
-    if (!zoomBtnDown && !rotBtnDown && !eraBtnDown && !centerBtnDown) return super.onTouchEvent(e);
+    if (!zoomBtnDown && !rotBtnDown && !eraBtnDown && !centerBtnDown && !tachoBtnDown) return super.onTouchEvent(e);
     if (act == MotionEvent.ACTION_UP) {
       if (zoomBtnDown && zoomBtn.contains(x, y)) {
         zoomMode = (zoomMode + 1) % 3;
@@ -139,14 +147,19 @@ public class HudView extends View {
         prefs.edit().putInt("zoom", zoomMode).apply();
       }
       if (rotBtnDown && rotBtn.contains(x, y) && onRotate != null) onRotate.run();
+      if (tachoBtnDown && tachoBtn.contains(x, y)) {
+        tacho = !tacho;
+        prefs.edit().putBoolean("tacho", tacho).apply();
+        if (tacho) ObdLink.get().start(); else ObdLink.get().stop();
+      }
       if (eraBtnDown && eraBtn.contains(x, y)) {
         era1970 = !era1970;
         prefs.edit().putBoolean("era1970", era1970).apply();
       }
       if (centerBtnDown && centerBtn.contains(x, y)) panE = panN = 0;
-      zoomBtnDown = rotBtnDown = eraBtnDown = centerBtnDown = false;
+      zoomBtnDown = rotBtnDown = eraBtnDown = centerBtnDown = tachoBtnDown = false;
     } else if (act == MotionEvent.ACTION_CANCEL) {
-      zoomBtnDown = rotBtnDown = eraBtnDown = centerBtnDown = false;
+      zoomBtnDown = rotBtnDown = eraBtnDown = centerBtnDown = tachoBtnDown = false;
     }
     invalidate();
     return true;
@@ -233,7 +246,13 @@ public class HudView extends View {
     float mw = MapProj.W * scale, mh = MapProj.H * scale;
     float mx = mapL + (aw - mw) / 2, my = mapT + (ah - mh) / 2;
     boolean zoomed = zoomMode != ZoomMap.JAPAN && State.fix && State.rgeo != null;
-    if (zoomed) {
+    if (tacho) {
+      zoomArea.setEmpty();
+      centerBtn.setEmpty();
+      zoomBtn.setEmpty();
+      eraBtn.setEmpty();
+      drawTacho(c, mapL, mapT, aw, ah, s, nowMs);
+    } else if (zoomed) {
       // 拡大した地図は、置き場所いっぱいに描く（住所の札とボタンもその枠に合わせる）
       zoomArea.set(mapL, mapT, mapL + aw, mapT + ah);
       drawZoom(c, mapL, mapT, aw, ah, s, nowMs);
@@ -252,6 +271,7 @@ public class HudView extends View {
 
     drawInstruments(c, by, land ? 660 * s : w, s);
     drawRotateButton(c, w, s);
+    drawTachoButton(c, s);
 
     // 走査線
     for (int sy = 0; sy < h; sy += Math.max(3, (int) (4 * s))) c.drawLine(0, sy, w, sy, pScan);
@@ -331,6 +351,147 @@ public class HudView extends View {
     if (!State.uploadStatus.isEmpty() && !State.uploadStatus.startsWith("送信 OK")) {
       glow(c, State.uploadStatus, 24 * s, iy + 116 * s, 26 * s, jp, AMBER, 0);
     }
+  }
+
+  /** [ROT] の左の [TACHO]／[MAP] */
+  private void drawTachoButton(Canvas c, float s) {
+    float bw = 150 * s, bh = 50 * s;
+    tachoBtn.set(rotBtn.left - 12 * s - bw, rotBtn.top, rotBtn.left - 12 * s, rotBtn.top + bh);
+    pText.setStyle(Paint.Style.FILL);
+    pText.setColor(tachoBtnDown ? Color.argb(200, 0, 120, 30) : Color.argb(190, 0, 0, 0));
+    c.drawRect(tachoBtn, pText);
+    pLine.setColor(GREEN);
+    pLine.setStrokeWidth(2.5f * s);
+    c.drawRect(tachoBtn, pLine);
+    glow(c, tacho ? "[MAP]" : "[TACHO]", tachoBtn.left + 14 * s, tachoBtn.bottom - 15 * s, 28 * s, mono, GREEN, 8 * s);
+  }
+
+  // ---- タコメーター（スズキ ハスラー MR31S、R06A 660cc に合わせた目盛り。値は実車で直す） ----
+  static final int TACHO_MAX = 8000, TACHO_RED = 6500, TACHO_SHIFT = 6000;
+
+  /** デモの回転数：アイドル → 1 速でふかす → 変速 → 2 速 → 3 速 → 戻る（16 秒でくり返し） */
+  private static float demoRpm(long t) {
+    float x = (t % 16000) / 1000f;
+    if (x < 2) return 800 + 30 * (float) Math.sin(x * 20);
+    if (x < 4.5f) return 800 + (x - 2) / 2.5f * 6000;
+    if (x < 5) return 6800 - (x - 4.5f) * 2 * 2800;
+    if (x < 8) return 4000 + (x - 5) / 3 * 2800;
+    if (x < 8.5f) return 6800 - (x - 8) * 2 * 2300;
+    if (x < 12) return 4500 + (x - 8.5f) / 3.5f * 1500;
+    return 6000 - (x - 12) / 4 * 5200;
+  }
+
+  /** 角度（Android の描き方：3 時が 0 度、時計回り）。0 回転が左下 135 度、最大が右下 45 度（270 度ぶん） */
+  private static float tachoAngle(float rpm) { return 135 + 270 * Math.max(0, Math.min(rpm, TACHO_MAX)) / TACHO_MAX; }
+
+  private void drawTacho(Canvas c, float l, float t, float w, float h, float s, long nowMs) {
+    boolean linked = State.obdLinked && System.currentTimeMillis() - State.obdAt < 3000;
+    float target = linked ? (float) State.obdRpm : demoRpm(nowMs);
+    shownRpm += (target - shownRpm) * 0.35f;
+    float cx = l + w / 2, cy = t + h / 2 + 10 * s, R = Math.min(w, h) / 2 - 16 * s;
+    RectF oval = new RectF(cx - R, cy - R, cx + R, cy + R);
+    pLine.setStrokeCap(Paint.Cap.BUTT);
+
+    // 状態（左上）
+    label(c, "// OBD LINK " + (linked ? "LOCKED" : State.obdStatus), l + 24 * s, t + 30 * s, s);
+    if (!linked) glow(c, State.obdName.isEmpty() ? "DEMO MODE" : "DEMO  " + State.obdName, l + 24 * s, t + 60 * s, 24 * s, mono, AMBER, 0);
+
+    // 外の輪（シフトの合図：赤く点滅）
+    boolean shift = shownRpm >= TACHO_SHIFT && (nowMs / 120) % 2 == 0;
+    pLine.setColor(shift ? RED : GREEN_DARK);
+    pLine.setStrokeWidth((shift ? 6 : 2) * s);
+    c.drawArc(oval, 135, 270, false, pLine);
+    // 今の回転数までの光る帯
+    RectF in = new RectF(oval);
+    in.inset(14 * s, 14 * s);
+    pLine.setStrokeWidth(10 * s);
+    pLine.setColor(Color.argb(70, 0, 255, 65));
+    c.drawArc(in, 135, 270, false, pLine);
+    pLine.setColor(shownRpm >= TACHO_RED ? RED : GREEN);
+    pLine.setShadowLayer(14 * s, 0, 0, shownRpm >= TACHO_RED ? RED : GREEN);
+    c.drawArc(in, 135, tachoAngle(shownRpm) - 135, false, pLine);
+    pLine.clearShadowLayer();
+    // レッドゾーン
+    RectF red = new RectF(oval);
+    red.inset(30 * s, 30 * s);
+    pLine.setColor(RED);
+    pLine.setStrokeWidth(8 * s);
+    c.drawArc(red, tachoAngle(TACHO_RED), tachoAngle(TACHO_MAX) - tachoAngle(TACHO_RED), false, pLine);
+    // 目盛りと数字
+    for (int r = 0; r <= TACHO_MAX; r += 250) {
+      boolean major = r % 1000 == 0, mid = r % 500 == 0;
+      double a = Math.toRadians(tachoAngle(r));
+      float r0 = R - (major ? 58 : mid ? 46 : 40) * s, r1 = R - 26 * s;
+      pLine.setColor(r >= TACHO_RED ? RED : major ? WHITE : GREEN_DIM);
+      pLine.setStrokeWidth((major ? 4 : 2) * s);
+      c.drawLine(cx + (float) Math.cos(a) * r0, cy + (float) Math.sin(a) * r0, cx + (float) Math.cos(a) * r1, cy + (float) Math.sin(a) * r1, pLine);
+      if (major) {
+        float rt = R - 84 * s;
+        String n = String.valueOf(r / 1000);
+        pText.setTypeface(mono);
+        pText.setTextSize(40 * s);
+        float tw = pText.measureText(n);
+        glow(c, n, cx + (float) Math.cos(a) * rt - tw / 2, cy + (float) Math.sin(a) * rt + 14 * s, 40 * s, mono, r >= TACHO_RED ? RED : WHITE, 6 * s);
+      }
+    }
+    // 針
+    double a = Math.toRadians(tachoAngle(shownRpm));
+    float tip = R - 30 * s, tail = 26 * s;
+    pLine.setStrokeCap(Paint.Cap.ROUND);
+    pLine.setColor(AMBER);
+    pLine.setStrokeWidth(7 * s);
+    pLine.setShadowLayer(12 * s, 0, 0, AMBER);
+    c.drawLine(cx - (float) Math.cos(a) * tail, cy - (float) Math.sin(a) * tail, cx + (float) Math.cos(a) * tip, cy + (float) Math.sin(a) * tip, pLine);
+    pLine.clearShadowLayer();
+    pLine.setStrokeCap(Paint.Cap.BUTT);
+    pText.setStyle(Paint.Style.FILL);
+    pText.setColor(Color.rgb(40, 40, 40));
+    c.drawCircle(cx, cy, 20 * s, pText);
+    pText.setColor(AMBER);
+    c.drawCircle(cx, cy, 10 * s, pText);
+    // 回転数の数字（針の下）と単位
+    String rv = String.valueOf(Math.round(shownRpm / 10) * 10);
+    float size = 86 * s, rw = measureFixed(rv, size);
+    bodoniFixed(c, rv, cx - rw / 2, cy + R * 0.48f, size, shownRpm >= TACHO_RED ? RED : WHITE, 14 * s, 600);
+    String unit = "x1000 r/min";
+    pText.setTypeface(mono);
+    pText.setTextSize(24 * s);
+    glow(c, unit, cx - pText.measureText(unit) / 2, cy + R * 0.48f + 34 * s, 24 * s, mono, GREEN_DIM, 0);
+    // 今いる所（メーターの下の開いた所、単位と車速の行の間）。OLD 表示なら古い名前
+    drawTachoPlace(c, cx, cy + R * 0.48f + 34 * s, t + h - 12 * s - 34 * s, Math.min(w, 2 * R) - 40 * s, s);
+    // 下：車速・水温・電圧（OBD から。デモでは --）
+    String sp = linked && State.obdKmh >= 0 ? State.obdKmh + " km/h" : "--- km/h";
+    String wt = linked && State.obdCoolant != Integer.MIN_VALUE ? "WATER " + State.obdCoolant + "C" : "WATER --";
+    String vt = linked && !Double.isNaN(State.obdVolt) ? String.format(Locale.ROOT, "BATT %.1fV", State.obdVolt) : "BATT --";
+    String line = sp + "   " + wt + "   " + vt;
+    pText.setTextSize(28 * s);
+    glow(c, line, cx - pText.measureText(line) / 2, t + h - 12 * s, 28 * s, mono, CYAN, 0);
+  }
+
+  /** タコメーターの下に、今いる所を 2 行で（1 行目 都道府県＋市区町村、2 行目 町字）。top〜bottom の間のまん中に */
+  private void drawTachoPlace(Canvas c, float cx, float top, float bottom, float maxW, float s) {
+    RGeo.Place pl = State.demoPlace != null ? State.demoPlace : State.place;
+    if (!State.fix || pl == null) return;
+    String city = pl.cityLine(), town = pl.townLine();
+    if (era1970) {
+      String[] o = State.oldNames == null ? null : State.oldNames.at(pl.index);
+      String[] tw = State.oldTowns == null ? null : State.oldTowns.at(pl.index);
+      if (o != null) city = o[0] + o[1];
+      if (tw != null && !tw[1].isEmpty()) town = tw[1];
+    }
+    fit(city, 30 * s, maxW, jp);
+    float s1 = fitSize;
+    fit(town, 48 * s, maxW, jpBold);
+    float s2 = fitSize;
+    float total = s1 + 10 * s + s2;
+    float y = top + (bottom - top - total) / 2 + s1;
+    pText.setTypeface(jp);
+    pText.setTextSize(s1);
+    glow(c, city, cx - pText.measureText(city) / 2, y, s1, jp, WHITE, 4 * s);
+    y += 10 * s + s2;
+    pText.setTypeface(jpBold);
+    pText.setTextSize(s2);
+    glow(c, town, cx - pText.measureText(town) / 2, y, s2, jpBold, WHITE, 10 * s);
   }
 
   /** 右上の向きのボタン（押すと MainActivity が 90 度ずつ向きを変える）。今の角度を出す */
